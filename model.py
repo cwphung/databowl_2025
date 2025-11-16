@@ -152,3 +152,58 @@ class GaussianReachabilityModelv2(nn.Module):
         reach_prob = self.fc_reach(z)
 
         return reach_prob
+
+class GaussianReachabilityModelv3(nn.Module):
+    def __init__(self,
+                 motion_input_dim=7,   # e.g., [x, y, o, vx, vy, ax, ay]
+                 lstm_hidden_dim=64,
+                 lstm_layers=2,
+                 fc_hidden_dim=64,
+                 dropout=0.3,
+                 distance_cutoff=1.0):
+        super().__init__()
+
+        # LSTM trajectory encoder ---
+        self.lstm = nn.LSTM(
+            input_size=motion_input_dim,
+            hidden_size=lstm_hidden_dim,
+            num_layers=lstm_layers,
+            batch_first=True,
+            dropout=dropout
+        )
+
+        # Combine motion state with target + time to estimate reachability
+        self.fc_gauss = nn.Sequential(
+            nn.Linear(lstm_hidden_dim + 1, fc_hidden_dim//2),
+            nn.ReLU(),
+            nn.Linear(fc_hidden_dim//2, 5)
+        )
+
+        self.alpha = nn.Parameter(torch.tensor(5.0))
+        self.distance_cutoff = distance_cutoff
+
+    def forward(self, motion_seq, seq_lens, target_info):
+        """
+        motion_seq: (batch, seq_len, motion_input_dim)
+        seq_lens: (batch,)
+        target_info: (batch, 3) tensor of [time, x_target, y_target]
+        """
+        # --- LSTM encoding ---
+        packed = pack_padded_sequence(motion_seq, seq_lens.cpu(), batch_first=True, enforce_sorted=False)
+        _, (h_n, _) = self.lstm(packed)
+        h = h_n[-1]  # (batch, lstm_hidden_dim) final lstm hidden state
+
+        # Combine encoded state, target, and time horizon
+        time = target_info[:, 0]
+        time = time.unsqueeze(-1)
+        z = torch.cat([h, time], dim=1)
+        gauss_params = self.fc_gauss(z)
+        mu = gauss_params[:, :2]
+        log_sig = gauss_params[:, 2:4]
+        sigma= torch.exp(log_sig) + 1e-6
+        raw_rho = gauss_params[:, 4]
+
+        sigma = sigma.clamp(min=1e-3, max=20)
+        rho = torch.tanh(raw_rho)*0.9999
+
+        return mu, sigma, rho
