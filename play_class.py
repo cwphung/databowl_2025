@@ -44,8 +44,10 @@ class play():
             f"  player_movement_input_keys={list(self.player_movement_input.keys())},\n"
             f"  player_movement_output_keys={list(self.player_movement_output.keys())},\n"
             f"  player_movement_targets_keys={list(self.player_movement_targets.keys())},\n"
-            f"  player_movement_labels_keys={list(self.player_movement_labels.keys())}\n"
-            f"  play score={self.score},\n"
+            f"  player_movement_labels_keys={list(self.player_movement_labels.keys())},\n"
+            f"  player_overlay_keys={list(self.overlays.keys())},\n"
+            f"  play result={self.pass_result},\n"
+            f"  play score={self.score}\n"
             f")"
         )
 
