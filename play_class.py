@@ -20,6 +20,7 @@ class play():
     def __init__(self):
         self.target_player_id = None
         self.target_player_name = None
+        self.target_player_position = None
         self.receiver_route = None
         self.defensive_coverage = None
         self.offense_team = None
@@ -27,8 +28,7 @@ class play():
         self.pass_result = None
         self.player_movement_input = dict()
         self.player_movement_output = dict()
-        self.player_movement_targets = dict()
-        self.player_movement_labels = dict()
+        self.target = None
         self.overlays = dict()
         self.score = None
 
@@ -37,15 +37,16 @@ class play():
             f"Play(\n"
             f"  target_player_id={self.target_player_id},\n"
             f"  target_player_name={self.target_player_name},\n"
+            f"  target_player_name={self.target_player_position},\n"
             f"  receiver_route={self.receiver_route},\n"
             f"  defensive_coverage={self.defensive_coverage},\n"
             f"  offense_team={self.offense_team},\n"
             f"  defense_team={self.defense_team},\n"
             f"  player_movement_input_keys={list(self.player_movement_input.keys())},\n"
             f"  player_movement_output_keys={list(self.player_movement_output.keys())},\n"
-            f"  player_movement_targets_keys={list(self.player_movement_targets.keys())},\n"
-            f"  player_movement_labels_keys={list(self.player_movement_labels.keys())},\n"
             f"  player_overlay_keys={list(self.overlays.keys())},\n"
+            f"  play output num frames={self.target[0]},\n"
+            f"  play ball land location={self.target[1:]},\n"
             f"  play result={self.pass_result},\n"
             f"  play score={self.score}\n"
             f")"
@@ -76,7 +77,7 @@ class play():
         input_len = len(self.player_movement_input[key])
         centerx = input_sequence[-1][0].item()
         centery = input_sequence[-1][1].item()
-        time = self.player_movement_targets[key][0][0]
+        time = self.target[0]
 
         targets = []
         coords_x = []
