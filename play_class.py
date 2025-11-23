@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,13 +9,23 @@ import numpy as np
 class play():
 
     # shared model instance
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     base_model = ReachabilityModel(
         motion_input_dim=7, lstm_layers=3, lstm_hidden_dim=32, fc_hidden_dim=32
     ).to(device)
-    PATH = "D:\CWP_DATA\Documents\databowl_2025\model_params\\full_model.pth"
-    state_dict = torch.load(PATH)
+    # PATH = "D:\CWP_DATA\Documents\databowl_2025\model_params\\full_model.pth"
+    # state_dict = torch.load(PATH)
+    BASE_DIR = os.getcwd()
+    MODEL_PATH = os.path.join(BASE_DIR, "model_params", "full_model.pth")
+    state_dict = torch.load(MODEL_PATH, map_location="cpu")
     base_model.load_state_dict(state_dict)
+    base_model.to(device)
     base_model.eval()
 
     def __init__(self):

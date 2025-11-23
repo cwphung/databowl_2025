@@ -3,7 +3,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from helper_functions import cleanInputData, cleanOutputData, cleanSupplementaryData
+from helper_functions import (
+    cleanInputData, cleanOutputData, cleanSupplementaryData, 
+    generatePlayerDict, generateCoverageDict, generateFullDataDict
+    )
 from visualization_functions import combine_tracking_data, animate_play
 
 
@@ -23,12 +26,12 @@ def load_and_clean_data(datapath: str):
         List of cleaned input tracking dataframes.
     output_dfs : list[pd.DataFrame]
         List of cleaned output tracking dataframes.
-    supp_dfs : list[pd.DataFrame]
+    supp_df : list[pd.DataFrame]
         List of cleaned supplementary play-level dataframes.
     """
     input_dfs = []
     output_dfs = []
-    supp_dfs = []
+    supp_df = None
 
     for item in sorted(os.listdir(datapath)):
         fullpath = os.path.join(datapath, item)
@@ -58,19 +61,25 @@ def load_and_clean_data(datapath: str):
 
         elif item.startswith("supplementary"):
             df_clean = cleanSupplementaryData(df)
-            supp_dfs.append(df_clean)
+            supp_df = df_clean
 
-    return input_dfs, output_dfs, supp_dfs
+    return input_dfs, output_dfs, supp_df
 
 
 if __name__ == "__main__":
 
     datapath = os.path.join(os.getcwd(), "data")
-    input_dfs, output_dfs, supp_dfs = load_and_clean_data(datapath)
+    input_dfs, output_dfs, supp_df = load_and_clean_data(datapath)
 
     # Combine into a unified df_all for visualization
-    df_all = combine_tracking_data(input_dfs, output_dfs, supp_dfs)
+    df_all = combine_tracking_data(input_dfs, output_dfs, supp_df)
     print(f"\nCombined df_all shape: {df_all.shape}")
+
+    # Generate full data dict
+    player_dict = generatePlayerDict(input_dfs)
+    coverage_dict = generateCoverageDict(supp_df)
+    full_data_dict = generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_dict)
+    print(f"\nGenerated full data dictionary.")
 
     # Prompt user to select a play (and optionally a player)
     upid = input("\nEnter unique_play_id: ").strip()

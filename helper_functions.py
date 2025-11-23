@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from play_class import play
+
 def cleanInputData(df: pd.DataFrame):
     cleandf = df.copy()
     cleandf['unique_play_id'] = cleandf['game_id'].astype(str) + cleandf['play_id'].astype(str)
@@ -34,9 +36,81 @@ def generatePlayerDict(input_dfs: list):
                 player_dict[id] = name
     return player_dict
 
-def generateCoverageDict(supp_dfs: list):
+def generateCoverageDict(supp_df):
     coverage_dict = dict()
-    for _,row in supp_dfs.iterrows():
+    for _, row in supp_df.iterrows():
         id = row['unique_play_id']
         coverage_dict[id] = row['team_coverage_man_zone']
     return coverage_dict
+
+def generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_dict):
+    full_data = dict()
+
+    # Process input data
+    for input_df in input_dfs:
+        for _,row in input_df.iterrows():
+            play_id = row['unique_play_id']
+
+            # filter to only include zone coverage plays
+            if coverage_dict[play_id] == 'ZONE_COVERAGE':
+                player_id = row['nfl_id']
+                if play_id not in full_data.keys():
+                    full_data[play_id] = play()
+                this_play = full_data[play_id]
+
+                # if is player to predict
+                if row['player_to_predict'] == True:
+                    this_play.target_player_id = player_id
+                    this_play.target_player_name = row['player_name']
+                    this_play.target_player_position = row['player_position']
+
+                # add movement to player movement dict
+                data = np.array([row['x'], row['y'], row['o'], row['v_x'], row['v_y'], row['a_x'], row['a_y']])
+                if player_id not in this_play.player_movement_input:
+                    this_play.player_movement_input[player_id] = [data]
+                    if row['player_to_predict'] == True:
+                        this_play.player_movement_targets[player_id] = np.array([row['num_frames_output'], row['ball_land_x'], row['ball_land_y']])
+                        this_play.player_movement_labels[player_id] = np.array([False])
+                else:
+                    this_play.player_movement_input[player_id].append(data)
+
+    # Process output data
+    for output_df in output_dfs:
+        for _,row in output_df.iterrows():
+            play_id = row['unique_play_id']
+
+            # filter to only include zone coverage plays
+            if coverage_dict[play_id] == 'ZONE_COVERAGE':
+                player_id = row['nfl_id']
+                this_play = full_data[play_id]
+
+                data = np.array([row['x'], row['y']])
+                if player_id not in this_play.player_movement_output:
+                    this_play.player_movement_output[player_id] = [data]
+                else:
+                    this_play.player_movement_output[player_id].append(data)
+
+                # add movement to player movement dict
+                target = np.array([row['frame_id'], row['x'], row['y']])
+                this_play.player_movement_targets[player_id] = np.vstack((this_play.player_movement_targets[player_id], target))
+                this_play.player_movement_labels[player_id] = np.append(this_play.player_movement_labels[player_id], True)
+
+                # update label for ball landing location based on player movement
+                land_info = this_play.player_movement_targets[player_id][0]
+                landx = land_info[1]
+                landy = land_info[2]
+                if ((abs(landx-row['x'])<1) and (abs(landy-row['y'])<1)):
+                    this_play.player_movement_labels[player_id][0] = True
+
+    # Process supplementary data
+    for _, row in supp_df.iterrows():
+        play_id = row['unique_play_id']
+        if play_id in full_data.keys() and row['team_coverage_man_zone'] == 'ZONE_COVERAGE':
+            this_play = full_data[play_id]
+            this_play.receiver_route = row['route_of_targeted_receiver']
+            this_play.defensive_coverage = row['team_coverage_type']
+            this_play.offense_team = row['possession_team']
+            this_play.defense_team = row['defensive_team']
+            this_play.pass_result = row['pass_result']
+
+    return full_data

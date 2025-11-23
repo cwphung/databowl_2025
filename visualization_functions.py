@@ -653,7 +653,7 @@ def merge_input_output(
     return df_all
 
 
-def combine_tracking_data(input_dfs, output_dfs, supp_dfs):
+def combine_tracking_data(input_dfs, output_dfs, supp_df):
     """
     Combine cleaned input, output, and supplementary tracking data into a single
     dataframe suitable for visualization and animation.
@@ -687,7 +687,6 @@ def combine_tracking_data(input_dfs, output_dfs, supp_dfs):
     # 1. Concatenate each group
     input_all = pd.concat(input_dfs, ignore_index=True) if input_dfs else pd.DataFrame()
     output_all = pd.concat(output_dfs, ignore_index=True) if output_dfs else pd.DataFrame()
-    supp_all = pd.concat(supp_dfs, ignore_index=True) if supp_dfs else pd.DataFrame()
 
     # 2. Build base tracking dataframe with continuous frame_id + label
     if not input_all.empty and not output_all.empty:
@@ -709,7 +708,7 @@ def combine_tracking_data(input_dfs, output_dfs, supp_dfs):
         return pd.DataFrame()
 
     # 3. If no supplementary data, we're done
-    if supp_all.empty:
+    if supp_df.empty:
         df_all = df_io
     else:
         # Avoid duplicating ID columns when merging supplementary
@@ -720,10 +719,10 @@ def combine_tracking_data(input_dfs, output_dfs, supp_dfs):
             "game_id_x", "play_id_x",
             "game_id_y", "play_id_y",
         }
-        supp_cols = [c for c in supp_all.columns if c not in forbidden_cols]
+        supp_cols = [c for c in supp_df.columns if c not in forbidden_cols]
 
         df_all = df_io.merge(
-            supp_all[["unique_play_id"] + supp_cols],
+            supp_df[["unique_play_id"] + supp_cols],
             on="unique_play_id",
             how="left",
         )
