@@ -1,7 +1,9 @@
 import yaml
 import numpy as np
 import pandas as pd
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 import matplotlib.patheffects as patheffects
 from matplotlib.animation import FuncAnimation
@@ -155,6 +157,7 @@ def animate_play(
     game_id,
     play_id,
     label_col: str = "label",
+    overlay: dict | None = None,
 ):
     """
     Animate a single play with play-level information and team colors.
@@ -173,6 +176,7 @@ def animate_play(
       - A small info panel with down & distance, clock, teams, and route
       - Optional "ghost" players for predicted frames (players that
         disappear from tracking stay at their last input position)
+      - Optional smooth heatmap overlays (offense/defense) from `overlay`
 
     Parameters
     ----------
@@ -191,6 +195,13 @@ def animate_play(
     label_col : str, optional
         Column indicating which frames are "input" vs "output".
         Defaults to "label".
+    overlay : dict, optional
+        Dictionary containing precomputed heatmap overlays. Expected keys:
+        - "x": 1D array of x-coordinates (yardline)
+        - "y": 1D array of y-coordinates (sideline)
+        - "offense": 1D array of scalar values (same length as x/y) for offense heat
+        - "defense": 1D array of scalar values (same length as x/y) for defense heat,
+          or None if not used.
 
     Returns
     -------
@@ -299,7 +310,11 @@ def animate_play(
     # ---- Figure & field ----
     fig, ax = plt.subplots(figsize=(12, 6))
     draw_nfl_field(ax)
-    ax.set_title(f"Game {game_id}, Play {play_id}")
+    try:
+        play_description = play_df["play_description"].iloc[0]
+    except Exception:
+        play_description = f"UPID: {str(game_id)}{str(play_id)}"
+    ax.set_title(play_description, fontsize=12)
 
     # LOS and 1st down
     los_line = ax.axvline(
@@ -371,6 +386,82 @@ def animate_play(
         zorder=2,
     )
 
+    # ---- Smooth heatmap overlays (offense / defense) via imshow ----
+    offense_img = None
+    defense_img = None
+
+    if overlay is not None:
+        ox = np.array(overlay.get("x", []))
+        oy = np.array(overlay.get("y", []))
+        off_vals = overlay.get("offense", None)
+        def_vals = overlay.get("defense", None)
+
+        if off_vals is not None and len(ox) > 0:
+            xs = np.unique(ox)
+            ys = np.unique(oy)
+            nx = len(xs)
+            ny = len(ys)
+
+            if nx * ny == len(ox):
+                # Build grids
+                off_grid = np.full((ny, nx), np.nan)
+                def_grid = np.full((ny, nx), np.nan) if def_vals is not None else None
+
+                x_to_ix = {x: i for i, x in enumerate(xs)}
+                y_to_iy = {y: i for i, y in enumerate(ys)}
+
+                for k in range(len(ox)):
+                    ix = x_to_ix[ox[k]]
+                    iy = y_to_iy[oy[k]]
+                    off_grid[iy, ix] = off_vals[k]
+                    if def_vals is not None:
+                        def_grid[iy, ix] = def_vals[k]
+
+                # Threshold – only show genuinely high probability
+                THRESH = 0.05
+                off_grid_masked = np.where(off_grid > THRESH, off_grid, np.nan)
+                def_grid_masked = None
+                if def_vals is not None:
+                    def_grid_masked = np.where(def_grid > THRESH, def_grid, np.nan)
+
+                # Colormaps with transparent NaNs
+                offense_cmap = cm.Blues.copy()
+                defense_cmap = cm.Reds.copy()
+                offense_cmap.set_bad(alpha=0.0)
+                defense_cmap.set_bad(alpha=0.0)
+
+                norm = mcolors.Normalize(vmin=THRESH, vmax=1.0)
+
+                # OFFENSE = BLUES
+                offense_img = ax.imshow(
+                    off_grid_masked,
+                    origin="lower",
+                    extent=[xs.min(), xs.max(), ys.min(), ys.max()],
+                    cmap=offense_cmap,
+                    norm=norm,
+                    alpha=0.5,
+                    interpolation="bilinear",
+                    zorder=1,
+                )
+
+                # DEFENSE = REDS
+                if def_grid_masked is not None:
+                    defense_img = ax.imshow(
+                        def_grid_masked,
+                        origin="lower",
+                        extent=[xs.min(), xs.max(), ys.min(), ys.max()],
+                        cmap=defense_cmap,
+                        norm=norm,
+                        alpha=0.5,
+                        interpolation="bilinear",
+                        zorder=1,
+                    )
+
+                # Hide initially (during input frames)
+                offense_img.set_visible(False)
+                if defense_img is not None:
+                    defense_img.set_visible(False)
+
     # ---- Player labels (last names) ----
     number_texts = []
 
@@ -412,18 +503,6 @@ def animate_play(
     def build_info_text(f, label_val):
         """
         Build the multi-line info string displayed in the upper-left corner.
-
-        Parameters
-        ----------
-        f : int
-            Current frame ID.
-        label_val : str
-            Value from `label_col` for the current frame (e.g. "input" or "output").
-
-        Returns
-        -------
-        text : str
-            Formatted info string with frame, down & distance, teams, and result.
         """
         down_str = f"{int(down)}" if pd.notna(down) else "?"
         ytg_str = f"{int(yards_to_go)}" if pd.notna(yards_to_go) else "?"
@@ -475,22 +554,6 @@ def animate_play(
     def update(i):
         """
         Per-frame update function for FuncAnimation.
-
-        Updates:
-          - Live player positions and colors
-          - Ghost players (post-input frames)
-          - Text labels above each player
-          - Info panel in the upper-left corner
-
-        Parameters
-        ----------
-        i : int
-            Index into the `frames` array (animation step).
-
-        Returns
-        -------
-        artists : tuple
-            Matplotlib artists updated for this frame.
         """
         nonlocal number_texts
         f = frames[i]
@@ -553,14 +616,31 @@ def animate_play(
         label_val = frame_i[label_col].iloc[0] if label_col in frame_i else ""
         info_text.set_text(build_info_text(f, label_val))
 
-        return (
+        # ---- Overlays: visible only after input frames end ----
+        if last_input_frame is not None and offense_img is not None:
+            if f > last_input_frame:
+                offense_img.set_visible(True)
+                if defense_img is not None:
+                    defense_img.set_visible(True)
+            else:
+                offense_img.set_visible(False)
+                if defense_img is not None:
+                    defense_img.set_visible(False)
+
+        artists = [
             scat_live,
             scat_ghost,
             info_text,
             los_line,
             ball_marker,
             *number_texts,
-        )
+        ]
+        if offense_img is not None:
+            artists.append(offense_img)
+        if defense_img is not None:
+            artists.append(defense_img)
+
+        return tuple(artists)
 
     anim = FuncAnimation(
         fig,

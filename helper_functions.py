@@ -63,14 +63,15 @@ def generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_d
                     this_play.target_player_id = player_id
                     this_play.target_player_name = row['player_name']
                     this_play.target_player_position = row['player_position']
+                    if this_play.target is None:
+                        this_play.target = np.array(
+                            [row["num_frames_output"], row["ball_land_x"], row["ball_land_y"]]
+                        )
 
                 # add movement to player movement dict
                 data = np.array([row['x'], row['y'], row['o'], row['v_x'], row['v_y'], row['a_x'], row['a_y']])
                 if player_id not in this_play.player_movement_input:
                     this_play.player_movement_input[player_id] = [data]
-                    if row['player_to_predict'] == True:
-                        this_play.player_movement_targets[player_id] = np.array([row['num_frames_output'], row['ball_land_x'], row['ball_land_y']])
-                        this_play.player_movement_labels[player_id] = np.array([False])
                 else:
                     this_play.player_movement_input[player_id].append(data)
 
@@ -89,18 +90,6 @@ def generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_d
                     this_play.player_movement_output[player_id] = [data]
                 else:
                     this_play.player_movement_output[player_id].append(data)
-
-                # add movement to player movement dict
-                target = np.array([row['frame_id'], row['x'], row['y']])
-                this_play.player_movement_targets[player_id] = np.vstack((this_play.player_movement_targets[player_id], target))
-                this_play.player_movement_labels[player_id] = np.append(this_play.player_movement_labels[player_id], True)
-
-                # update label for ball landing location based on player movement
-                land_info = this_play.player_movement_targets[player_id][0]
-                landx = land_info[1]
-                landy = land_info[2]
-                if ((abs(landx-row['x'])<1) and (abs(landy-row['y'])<1)):
-                    this_play.player_movement_labels[player_id][0] = True
 
     # Process supplementary data
     for _, row in supp_df.iterrows():
