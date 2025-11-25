@@ -37,7 +37,6 @@ class play():
         self.player_movement_input = dict()
         self.player_movement_output = dict()
         self.target = None
-        self.overlays = dict()
         self.score = None
 
     def __str__(self):
@@ -52,13 +51,19 @@ class play():
             f"  defense_team={self.defense_team},\n"
             f"  player_movement_input_keys={list(self.player_movement_input.keys())},\n"
             f"  player_movement_output_keys={list(self.player_movement_output.keys())},\n"
-            f"  player_overlay_keys={list(self.overlays.keys())},\n"
             f"  play output num frames={self.target[0]},\n"
             f"  play ball land location={self.target[1:]},\n"
             f"  play result={self.pass_result},\n"
             f"  play score={self.score}\n"
             f")"
         )
+
+    def get_input_seq_len(self):
+        if self.player_movement_input.keys():
+            keys = list(self.player_movement_input.keys())
+            return len(self.player_movement_input[keys[0]])
+        else:
+            return 0
 
     def generate_overlays_and_score(self):
         self.overlays = {}
@@ -74,11 +79,11 @@ class play():
 
         self.overlay_x = coords_x
         self.overlay_y = coords_y
-        
+
         if self.target_player_id is None or self.target_player_id not in self.overlays:
             self.score = None
             return
-        
+
         offense_probs = self.overlays[self.target_player_id]
         offense_probs = np.array(offense_probs, dtype=float)
         defense_sum = np.zeros_like(offense_probs)
@@ -94,12 +99,13 @@ class play():
         overlap_area = np.minimum(offense_probs, defense_sum)[overlap_mask].sum()
         offense_area = offense_probs[off_mask].sum()
         self.score = float(offense_area - overlap_area)
-    
+
     def _generate_overlay(self, key):
         input_sequence = self.player_movement_input[key]
-        input_len = len(self.player_movement_input[key])
-        centerx = input_sequence[-1][0].item()
-        centery = input_sequence[-1][1].item()
+        input_sequence = input_sequence[:frame]
+        input_len = frame
+        centerx = input_sequence[frame-1][0].item()
+        centery = input_sequence[frame-1][1].item()
         time = self.target[0]
 
         targets = []
@@ -113,7 +119,7 @@ class play():
                 coords_x.append(i)
                 coords_y.append(j)
         targets = torch.tensor(targets, dtype=torch.float32)
-        
+
         normalied_input_seq = self._normalize_seq(input_sequence)
         normalied_input_seq = torch.from_numpy(normalied_input_seq).float()
         input_len = torch.tensor(input_len, dtype = torch.float32)
