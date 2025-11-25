@@ -9,7 +9,6 @@ import numpy as np
 class play():
 
     # shared model instance
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -19,8 +18,6 @@ class play():
     base_model = ReachabilityModel(
         motion_input_dim=7, lstm_layers=3, lstm_hidden_dim=32, fc_hidden_dim=32
     ).to(device)
-    # PATH = "D:\CWP_DATA\Documents\databowl_2025\model_params\\full_model.pth"
-    # state_dict = torch.load(PATH)
     BASE_DIR = os.getcwd()
     MODEL_PATH = os.path.join(BASE_DIR, "model_params", "full_model.pth")
     state_dict = torch.load(MODEL_PATH, map_location="cpu")
@@ -64,25 +61,40 @@ class play():
         )
 
     def generate_overlays_and_score(self):
+        self.overlays = {}
+        coords_x = None
+        coords_y = None
+
         for key in self.player_movement_output.keys():
-            _,_,overlay = self._generate_overlay(key)
-            self.overlays[key] = overlay
+            cx, cy, overlay = self._generate_overlay(key)
+            self.overlays[key] = np.array(overlay)
+            if coords_x is None:
+                coords_x = np.array(cx)
+                coords_y = np.array(cy)
 
-        sum_score = 0
+        self.overlay_x = coords_x
+        self.overlay_y = coords_y
+        
+        if self.target_player_id is None or self.target_player_id not in self.overlays:
+            self.score = None
+            return
+        
         offense_probs = self.overlays[self.target_player_id]
-        defense_probs = [0] * len(offense_probs)
-        for key in self.overlays.keys():
-            if key != self.target_player_id:
-                defense_probs += self.overlays[key]
-        
-        for i in range(0, len(offense_probs)):
-            if offense_probs[i] > 0:
-                sum_score += offense_probs[i]
-                sum_score -= defense_probs[i]
-        
-        self.score = sum_score
-    
+        offense_probs = np.array(offense_probs, dtype=float)
+        defense_sum = np.zeros_like(offense_probs)
 
+        for pid, probs in self.overlays.items():
+            if pid != self.target_player_id:
+                defense_sum += np.array(probs, dtype=float)
+
+        thresh = 1e-6
+        off_mask = offense_probs > thresh
+        def_mask = defense_sum > thresh
+        overlap_mask = off_mask & def_mask
+        overlap_area = np.minimum(offense_probs, defense_sum)[overlap_mask].sum()
+        offense_area = offense_probs[off_mask].sum()
+        self.score = float(offense_area - overlap_area)
+    
     def _generate_overlay(self, key):
         input_sequence = self.player_movement_input[key]
         input_len = len(self.player_movement_input[key])

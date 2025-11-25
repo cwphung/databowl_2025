@@ -153,72 +153,69 @@ def load_team_colors_yaml(path: str = "team_colors.yaml"):
 
 
 def animate_play(
-    df_all: pd.DataFrame,
-    game_id,
-    play_id,
+    play_df: pd.DataFrame,
+    play_obj=None,
     label_col: str = "label",
-    overlay: dict | None = None,
+    heat_thresh: float = 0.01
 ):
     """
-    Animate a single play with play-level information and team colors.
-
-    This function expects a combined dataframe that includes:
-      - Input frames (label == "input") representing observed tracking data
-      - Output frames (label == "output") representing model predictions
-      - Supplementary play-level metadata merged in (e.g., quarter, down,
-        yards_to_go, possession_team, defensive_team, pass_result, route_of_targeted_receiver)
-
-    The animation shows:
-      - Player positions over time
-      - Team-colored markers (primary fill + secondary outline)
-      - Line of scrimmage and first-down line
-      - Ball landing marker with style based on `pass_result`
-      - A small info panel with down & distance, clock, teams, and route
-      - Optional "ghost" players for predicted frames (players that
-        disappear from tracking stay at their last input position)
-      - Optional smooth heatmap overlays (offense/defense) from `overlay`
+    Animate a single play.
 
     Parameters
     ----------
-    df_all : pandas.DataFrame
-        Combined dataframe containing both input and output frames, plus
-        supplementary columns. Must include at least:
-        ['game_id', 'play_id', 'frame_id', 'x', 'y', 'nfl_id',
-         'player_name', 'player_side', 'absolute_yardline_number',
-         'yards_to_go', 'possession_team', 'defensive_team',
-         'pass_result', 'route_of_targeted_receiver',
-         'ball_land_x', 'ball_land_y', label_col]
-    game_id : int or str
-        Game identifier for the play to animate.
-    play_id : int or str
-        Play identifier within the game to animate.
-    label_col : str, optional
-        Column indicating which frames are "input" vs "output".
-        Defaults to "label".
-    overlay : dict, optional
-        Dictionary containing precomputed heatmap overlays. Expected keys:
-        - "x": 1D array of x-coordinates (yardline)
-        - "y": 1D array of y-coordinates (sideline)
-        - "offense": 1D array of scalar values (same length as x/y) for offense heat
-        - "defense": 1D array of scalar values (same length as x/y) for defense heat,
-          or None if not used.
+    play_df : pandas.DataFrame
+        Data for a single play, containing both input and output frames,
+        plus supplementary columns. Must include at least:
+        ['frame_id', 'x', 'y', 'nfl_id', 'player_name', 'player_side',
+         'absolute_yardline_number', 'yards_to_go', 'possession_team',
+         'defensive_team', 'pass_result', 'route_of_targeted_receiver',
+         'ball_land_x', 'ball_land_y', label_col, 'play_description']
+    play_obj : play or None
+        Optional play object that carries model overlays & score.
+    label_col : str, default "label"
+        Column indicating "input" vs "output" frames.
+    heat_thresh : float, default 0.01
+        Value indicating the minimum probability to display on heatmap.
 
     Returns
     -------
     anim : matplotlib.animation.FuncAnimation
-        Matplotlib animation object for the selected play.
     """
-    # ---- Filter to this play ----
-    play_df = df_all[
-        (df_all["game_id"] == game_id) &
-        (df_all["play_id"] == play_id)
-    ].copy()
-
-    if play_df.empty:
-        raise ValueError("No rows found for that (game_id, play_id)")
-
+    # ---- Sort frames ----
     play_df = play_df.sort_values(["frame_id", "nfl_id"])
     frames = np.sort(play_df["frame_id"].unique())
+
+    # ---- Get overlays from play_obj if provided ----
+    overlay = None
+    if play_obj is not None and getattr(play_obj, "target_player_id", None) is not None:
+        play_obj.generate_overlays_and_score()
+
+        xcoords = getattr(play_obj, "overlay_x", None)
+        ycoords = getattr(play_obj, "overlay_y", None)
+
+        if xcoords is not None and ycoords is not None:
+            target_key = play_obj.target_player_id
+
+            if target_key in play_obj.overlays:
+                offense_overlay = np.array(play_obj.overlays[target_key], dtype=float)
+
+                defense_overlays = [
+                    np.array(probs, dtype=float)
+                    for pid, probs in play_obj.overlays.items()
+                    if pid != target_key
+                ]
+                if defense_overlays:
+                    stacked = np.stack(defense_overlays, axis=1)
+                    defense_overlay = stacked.max(axis=1)
+                else:
+                    defense_overlay = None
+
+                overlay = {
+                    "x": np.array(xcoords),
+                    "y": np.array(ycoords),
+                    "offense": offense_overlay,
+                    "defense": defense_overlay,
+                }
 
     # ---- Play-level info ----
     def first_non_null(col):
@@ -264,7 +261,42 @@ def animate_play(
         last_input_frame = None
         baseline_df = None
 
-    # ---- Team colors using NFL palette ----
+    # ---- Identify output frames (for heatmap fade-in) ----
+    if last_input_frame is not None:
+        output_frames = frames[frames > last_input_frame]
+        if len(output_frames) > 0:
+            fade_frames = min(10, len(output_frames))
+        else:
+            output_frames = np.array([])
+            fade_frames = 1
+    else:
+        output_frames = np.array([])
+        fade_frames = 1
+
+    # ---- Split players into dynamic (have output) vs static (no output) ----
+    non_output_players = set()
+    baseline_static = None
+    baseline_dynamic = None
+
+    if baseline_df is not None:
+        # players that ever appear with label == "output"
+        if label_col in play_df.columns:
+            output_players = set(
+                play_df.loc[play_df[label_col] == "output", "nfl_id"].unique()
+            )
+        else:
+            output_players = set()
+
+        all_players = set(baseline_df.index)
+        non_output_players = all_players - output_players
+
+        if non_output_players:
+            baseline_static = baseline_df.loc[list(non_output_players)]
+            baseline_dynamic = baseline_df.drop(index=list(non_output_players))
+        else:
+            baseline_dynamic = baseline_df
+
+    # ---- Team colors ----
     TEAM_COLORS, TEAM_SECONDARY_COLORS = load_team_colors_yaml()
     fallback_palette = ["tab:blue", "tab:red", "tab:green", "tab:orange"]
 
@@ -310,10 +342,9 @@ def animate_play(
     # ---- Figure & field ----
     fig, ax = plt.subplots(figsize=(12, 6))
     draw_nfl_field(ax)
-    try:
-        play_description = play_df["play_description"].iloc[0]
-    except Exception:
-        play_description = f"UPID: {str(game_id)}{str(play_id)}"
+    play_description = play_df.get("play_description", pd.Series([None])).iloc[0]
+    if pd.isna(play_description):
+        play_description = "Selected play"
     ax.set_title(play_description, fontsize=12)
 
     # LOS and 1st down
@@ -386,9 +417,40 @@ def animate_play(
         zorder=2,
     )
 
+    scat_static = None
+    static_face = None
+    static_edge = None
+    if baseline_static is not None and not baseline_static.empty:
+        static_face = get_colors(baseline_static["team_for_color"], team_color_map)
+        static_edge = get_colors(baseline_static["team_for_color"], team_outline_map)
+        # start empty; we'll show these only after the input phase
+        scat_static = ax.scatter(
+            [], [],
+            s=80,
+            facecolors=[],
+            edgecolors=[],
+            alpha=0.3,   # ghosted look
+            zorder=2,
+        )
+
     # ---- Smooth heatmap overlays (offense / defense) via imshow ----
     offense_img = None
     defense_img = None
+
+    def make_alpha_cmap(base_cmap, thresh: float):
+        """
+        Return a copy of base_cmap where alpha is 0 below 'thresh'
+        and ramps up smoothly above it.
+
+        Assumes data values are in [0, 1].
+        """
+        base = base_cmap(np.linspace(0, 1, 256))
+        # build an alpha ramp
+        alphas = np.linspace(0, 1, 256)
+        cutoff = int(np.clip(thresh * 255, 0, 255))
+        alphas[:cutoff] = 0.0      # fully transparent below threshold
+        base[:, -1] = alphas
+        return mcolors.ListedColormap(base)
 
     if overlay is not None:
         ox = np.array(overlay.get("x", []))
@@ -403,9 +465,9 @@ def animate_play(
             ny = len(ys)
 
             if nx * ny == len(ox):
-                # Build grids
-                off_grid = np.full((ny, nx), np.nan)
-                def_grid = np.full((ny, nx), np.nan) if def_vals is not None else None
+                # Build grids (no NaN masking here)
+                off_grid = np.zeros((ny, nx), dtype=float)
+                def_grid = np.zeros((ny, nx), dtype=float) if def_vals is not None else None
 
                 x_to_ix = {x: i for i, x in enumerate(xs)}
                 y_to_iy = {y: i for i, y in enumerate(ys)}
@@ -417,43 +479,38 @@ def animate_play(
                     if def_vals is not None:
                         def_grid[iy, ix] = def_vals[k]
 
-                # Threshold – only show genuinely high probability
-                THRESH = 0.05
-                off_grid_masked = np.where(off_grid > THRESH, off_grid, np.nan)
-                def_grid_masked = None
-                if def_vals is not None:
-                    def_grid_masked = np.where(def_grid > THRESH, def_grid, np.nan)
+                # Clip to [0, 1] just to be safe
+                off_grid = np.clip(off_grid, 0.0, 1.0)
+                if def_grid is not None:
+                    def_grid = np.clip(def_grid, 0.0, 1.0)
 
-                # Colormaps with transparent NaNs
-                offense_cmap = cm.Blues.copy()
-                defense_cmap = cm.Reds.copy()
-                offense_cmap.set_bad(alpha=0.0)
-                defense_cmap.set_bad(alpha=0.0)
+                # Colormaps with alpha ramp (no NaNs)
+                offense_cmap = make_alpha_cmap(cm.Blues, heat_thresh)
+                defense_cmap = make_alpha_cmap(cm.Reds, heat_thresh)
 
-                norm = mcolors.Normalize(vmin=THRESH, vmax=1.0)
+                # Full range in [0,1]; alpha handles visibility below thresh
+                norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
 
-                # OFFENSE = BLUES
                 offense_img = ax.imshow(
-                    off_grid_masked,
+                    off_grid,
                     origin="lower",
                     extent=[xs.min(), xs.max(), ys.min(), ys.max()],
                     cmap=offense_cmap,
                     norm=norm,
-                    alpha=0.5,
-                    interpolation="bilinear",
+                    alpha=1.0,               # let the colormap alpha do the work
+                    interpolation="bicubic",  # smoother than bilinear
                     zorder=1,
                 )
 
-                # DEFENSE = REDS
-                if def_grid_masked is not None:
+                if def_grid is not None:
                     defense_img = ax.imshow(
-                        def_grid_masked,
+                        def_grid,
                         origin="lower",
                         extent=[xs.min(), xs.max(), ys.min(), ys.max()],
                         cmap=defense_cmap,
                         norm=norm,
-                        alpha=0.5,
-                        interpolation="bilinear",
+                        alpha=1.0,
+                        interpolation="bicubic",
                         zorder=1,
                     )
 
@@ -462,19 +519,10 @@ def animate_play(
                 if defense_img is not None:
                     defense_img.set_visible(False)
 
-    # ---- Player labels (last names) ----
+    # ---- Player labels ----
     number_texts = []
 
     def init_labels(frame_df):
-        """
-        Initialize name labels for the first frame.
-
-        Parameters
-        ----------
-        frame_df : pandas.DataFrame
-            Subset of `play_df` for a single frame, containing at least
-            ['player_name', 'x', 'y'].
-        """
         nonlocal number_texts
         for t in number_texts:
             t.remove()
@@ -498,27 +546,74 @@ def animate_play(
     init_labels(frame0)
 
     # ---- Info panel ----
-    label0 = frame0[label_col].iloc[0] if label_col in frame0 else ""
+    label0 = frame0["label"].iloc[0] if "label" in frame0 else ""
 
     def build_info_text(f, label_val):
         """
         Build the multi-line info string displayed in the upper-left corner.
+
+        Layout:
+          Frame, label
+          Offense vs Defense
+          Quarter, clock, down & distance
+          Route, coverage
+          Score (model), result
         """
-        down_str = f"{int(down)}" if pd.notna(down) else "?"
-        ytg_str = f"{int(yards_to_go)}" if pd.notna(yards_to_go) else "?"
-        q_str = f"Q{quarter}" if pd.notna(quarter) else ""
+        # Quarter as nice string (no floats)
+        if pd.notna(quarter):
+            try:
+                q_int = int(quarter)
+                q_str = f"Q{q_int}"
+            except Exception:
+                q_str = f"Q{quarter}"
+        else:
+            q_str = "Q?"
+
+        # Down & distance
+        down_str = "?" if pd.isna(down) else str(int(down))
+        ytg_str = "?" if pd.isna(yards_to_go) else str(int(yards_to_go))
+
+        # Clock
         clock_str = game_clock or ""
-        off_def_line = ""
+
+        # Teams
         if offense_team and defense_team:
             off_def_line = f"{offense_team} (O) vs {defense_team} (D)"
-        result_str = f"Result: {pass_result}" if pass_result else ""
-        route_str = f"Route: {route}" if route else ""
-        return (
-            f"Frame: {f}  |  Label: {label_val}\n"
-            f"{q_str} {clock_str}   {down_str} & {ytg_str}\n"
-            f"{off_def_line}\n"
-            f"{result_str}   {route_str}"
-        )
+        else:
+            off_def_line = ""
+
+        # Route
+        route_str = route if route else "N/A"
+
+        # Coverage: prefer play_obj attribute, fall back to dataframe if needed
+        coverage_val = None
+        if play_obj is not None:
+            coverage_val = getattr(play_obj, "defensive_coverage", None)
+        if coverage_val is None and "team_coverage_type" in play_df.columns:
+            s_cov = play_df["team_coverage_type"].dropna()
+            if len(s_cov) > 0:
+                coverage_val = s_cov.iloc[0]
+        coverage_str = coverage_val if coverage_val else "N/A"
+
+        # Model score
+        if play_obj is not None and getattr(play_obj, "score", None) is not None:
+            try:
+                score_str = f"{float(play_obj.score):.3f}"
+            except Exception:
+                score_str = str(play_obj.score)
+        else:
+            score_str = "N/A"
+
+        # Result
+        result_str = pass_result if pass_result else "N/A"
+
+        line1 = off_def_line
+        line2 = f"{q_str} {clock_str}   {down_str} & {ytg_str}"
+        line3 = f"Route: {route_str}  |  Coverage: {coverage_str}"
+        line4 = f"Score: {score_str}  |  Result: {result_str}"
+        line5 = f"Frame: {f}  |  Label: {label_val}"
+
+        return "\n".join([line1, line2, line3, line4, line5])
 
     info_text = ax.text(
         2, 52,
@@ -531,7 +626,7 @@ def animate_play(
         zorder=5,
     )
 
-    # ---- Legend: team labels with (O)/(D) ----
+    # ---- Legend ----
     teams_for_legend = sorted(set(unique_teams)) if unique_teams else []
     team_label_map = {}
     if offense_team in teams_for_legend:
@@ -552,32 +647,67 @@ def animate_play(
 
     # ---- Animation update ----
     def update(i):
-        """
-        Per-frame update function for FuncAnimation.
-        """
         nonlocal number_texts
         f = frames[i]
+        
         frame_i = play_df[play_df["frame_id"] == f]
 
-        face = get_colors(frame_i["team_for_color"], team_color_map)
-        edge = get_colors(frame_i["team_for_color"], team_outline_map)
-        scat_live.set_offsets(frame_i[["x", "y"]].to_numpy())
-        scat_live.set_facecolors(face)
-        scat_live.set_edgecolors(edge)
+        # ----- LIVE (moving) players -----
+        # During INPUT frames: everybody moves (including non-output players)
+        # During OUTPUT frames: only players that have output frames keep moving
+        if (
+            last_input_frame is not None
+            and f > last_input_frame
+            and non_output_players
+        ):
+            # post-input: only dynamic players move
+            frame_dyn = frame_i[~frame_i["nfl_id"].isin(non_output_players)]
+        else:
+            # pre-input (or no outputs): all players move
+            frame_dyn = frame_i
 
-        # Ghost players
-        if baseline_df is not None and last_input_frame is not None and f > last_input_frame:
-            current_ids = set(frame_i["nfl_id"].unique())
-            baseline_ids = set(baseline_df.index)
+        if len(frame_dyn) > 0:
+            base_face = get_colors(frame_dyn["team_for_color"], team_color_map)
+            base_edge = get_colors(frame_dyn["team_for_color"], team_outline_map)
+
+            # Optionally ghost non-output players (lower alpha) even while moving
+            colors_rgba = []
+            edges_rgba = []
+            for (c_face, c_edge, pid) in zip(
+                base_face, base_edge, frame_dyn["nfl_id"].values
+            ):
+                r, g, b, a = mcolors.to_rgba(c_face)
+                er, eg, eb, ea = mcolors.to_rgba(c_edge)
+                if pid in non_output_players:
+                    colors_rgba.append((r, g, b, 0.4))   # ghosted
+                    edges_rgba.append((er, eg, eb, 0.4))
+                else:
+                    colors_rgba.append((r, g, b, 1.0))
+                    edges_rgba.append((er, eg, eb, 1.0))
+
+            scat_live.set_offsets(frame_dyn[["x", "y"]].to_numpy())
+            scat_live.set_facecolors(colors_rgba)
+            scat_live.set_edgecolors(edges_rgba)
+        else:
+            scat_live.set_offsets(np.empty((0, 2)))
+
+        # ----- GHOST (dynamic players that disappear after input) -----
+        if (
+            baseline_dynamic is not None
+            and last_input_frame is not None
+            and f > last_input_frame
+        ):
+            current_ids = set(frame_dyn["nfl_id"].unique())
+            baseline_ids = set(baseline_dynamic.index)
             ghost_ids = sorted(list(baseline_ids - current_ids))
             if ghost_ids:
-                ghost_pos = baseline_df.loc[ghost_ids, ["x", "y"]].to_numpy()
+                ghost_pos = baseline_dynamic.loc[ghost_ids, ["x", "y"]].to_numpy()
                 scat_ghost.set_offsets(ghost_pos)
                 ghost_face = get_colors(
-                    baseline_df.loc[ghost_ids, "team_for_color"], team_color_map
+                    baseline_dynamic.loc[ghost_ids, "team_for_color"], team_color_map
                 )
                 ghost_edge = get_colors(
-                    baseline_df.loc[ghost_ids, "team_for_color"], team_outline_map
+                    baseline_dynamic.loc[ghost_ids, "team_for_color"], team_outline_map
                 )
                 scat_ghost.set_facecolors(ghost_face)
                 scat_ghost.set_edgecolors(ghost_edge)
@@ -586,11 +716,30 @@ def animate_play(
         else:
             scat_ghost.set_offsets(np.empty((0, 2)))
 
-        # Update labels
+        # ----- STATIC non-output players after input phase -----
+        if (
+            scat_static is not None
+            and baseline_static is not None
+            and static_face is not None
+            and last_input_frame is not None
+        ):
+            if f > last_input_frame:
+                scat_static.set_offsets(
+                    baseline_static[["x", "y"]].to_numpy()
+                )
+                scat_static.set_facecolors(static_face)
+                scat_static.set_edgecolors(static_edge)
+            else:
+                # hide static scatter during input frames
+                scat_static.set_offsets(np.empty((0, 2)))
+
+        # ----- Update labels -----
         for t in number_texts:
             t.remove()
         number_texts = []
-        for _, row in frame_i.iterrows():
+        
+        # Labels for moving players
+        for _, row in frame_dyn.iterrows():
             name = row.get("player_name", "")
             label_val = short_player_label(name)
             x, y = row["x"], row["y"]
@@ -612,20 +761,56 @@ def animate_play(
             ])
             number_texts.append(txt)
 
-        # Update info panel
+        # Labels for static non-output players after input phase
+        if (
+            baseline_static is not None
+            and last_input_frame is not None
+            and f > last_input_frame
+        ):
+            for _, row in baseline_static.iterrows():
+                name = row.get("player_name", "")
+                label_val = short_player_label(name)
+                x, y = row["x"], row["y"]
+                team = row.get("team_for_color", None)
+                text_color = team_outline_map.get(team, "white")
+                outline_color = team_color_map.get(team, "black")
+                txt = ax.text(
+                    x, y,
+                    label_val,
+                    color=text_color,
+                    fontsize=7,
+                    fontweight="bold",
+                    ha="center",
+                    va="center",
+                    alpha=0.7,
+                    zorder=3,
+                )
+                txt.set_path_effects([
+                    patheffects.withStroke(linewidth=1.0, foreground=outline_color)
+                ])
+                number_texts.append(txt)
+
+        # ----- Info panel -----
         label_val = frame_i[label_col].iloc[0] if label_col in frame_i else ""
         info_text.set_text(build_info_text(f, label_val))
 
-        # ---- Overlays: visible only after input frames end ----
-        if last_input_frame is not None and offense_img is not None:
-            if f > last_input_frame:
-                offense_img.set_visible(True)
-                if defense_img is not None:
-                    defense_img.set_visible(True)
-            else:
+        # ---- Overlays fade-in after input frames ----
+        if offense_img is not None and last_input_frame is not None and len(output_frames) > 0:
+            if f <= last_input_frame:
                 offense_img.set_visible(False)
                 if defense_img is not None:
                     defense_img.set_visible(False)
+            else:
+                offense_img.set_visible(True)
+                if defense_img is not None:
+                    defense_img.set_visible(True)
+
+                idx = np.searchsorted(output_frames, f, side="left")
+                progress = min(1.0, idx / max(1, fade_frames - 1))
+
+                offense_img.set_alpha(progress)
+                if defense_img is not None:
+                    defense_img.set_alpha(progress)
 
         artists = [
             scat_live,
@@ -635,6 +820,8 @@ def animate_play(
             ball_marker,
             *number_texts,
         ]
+        if scat_static is not None:
+            artists.append(scat_static)
         if offense_img is not None:
             artists.append(offense_img)
         if defense_img is not None:

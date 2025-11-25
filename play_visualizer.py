@@ -126,51 +126,13 @@ if __name__ == "__main__":
             )
             continue
 
-        overlay = None
-        try:
-            play_obj = full_data_dict[upid]
-        except KeyError:
-            print(
-                f"[Warning] unique_play_id={upid!r} not found in full_data_dict; "
-                "running animation without overlays."
-            )
-            play_obj = None
-
-        if play_obj is not None:
-            target_key = play_obj.target_player_id
-
-            if target_key is None:
-                print("[Warning] No target_player_id for this play; skipping overlays.")
-            else:
-                # Offense overlay (target player)
-                xcoords, ycoords, offense_overlay = play_obj._generate_overlay(target_key)
-
-                # Defense overlays: aggregate over all non-target defenders
-                defense_overlays = []
-                for key in play_obj.player_movement_output.keys():
-                    if key != target_key:
-                        _, _, temp = play_obj._generate_overlay(key)
-                        defense_overlays.append(temp)
-
-                if defense_overlays:
-                    defense_overlay = np.mean(np.stack(defense_overlays, axis=0), axis=0)
-                else:
-                    defense_overlay = None
-
-                overlay = {
-                    "x": np.array(xcoords),
-                    "y": np.array(ycoords),
-                    "offense": np.array(offense_overlay),
-                    "defense": (
-                        np.array(defense_overlay) if defense_overlay is not None else None
-                    ),
-                }
-
         # Run the animation for the selected play
-        row = df_all.loc[df_all["unique_play_id"] == upid].iloc[0]
+        play_df = df_all[(df_all["game_id"] == game_id) & (df_all["play_id"] == play_id)]
+        play_obj = full_data_dict.get(upid, None)
+        row = play_df.iloc[0]
         desc = row.get("play_description", f"No description for {upid}")
         print(f"Animating: {desc}")
-        animation = animate_play(df_all, game_id=game_id, play_id=play_id, overlay=overlay)
+        animation = animate_play(play_df, play_obj)
 
         save_animation = input("Do you want to save the animation (Y): ")
         if save_animation == "Y":
