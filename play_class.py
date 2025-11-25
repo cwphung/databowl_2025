@@ -40,7 +40,6 @@ class play():
         self.player_movement_input = dict()
         self.player_movement_output = dict()
         self.target = None
-        self.overlays = dict()
         self.score = None
 
     def __str__(self):
@@ -55,39 +54,51 @@ class play():
             f"  defense_team={self.defense_team},\n"
             f"  player_movement_input_keys={list(self.player_movement_input.keys())},\n"
             f"  player_movement_output_keys={list(self.player_movement_output.keys())},\n"
-            f"  player_overlay_keys={list(self.overlays.keys())},\n"
             f"  play output num frames={self.target[0]},\n"
             f"  play ball land location={self.target[1:]},\n"
             f"  play result={self.pass_result},\n"
             f"  play score={self.score}\n"
             f")"
         )
+    
+    def get_input_seq_len(self):
+        if self.player_movement_input.keys():
+            keys = list(self.player_movement_input.keys())
+            return len(self.player_movement_input[keys[0]])
+        else:
+            return 0
 
-    def generate_overlays_and_score(self):
+    def generate_overlays_and_score(self, frame):
+        temp_overlays = dict()
+        coords_x = []
+        coords_y = []
         for key in self.player_movement_output.keys():
-            _,_,overlay = self._generate_overlay(key)
-            self.overlays[key] = overlay
+            coords_x, coords_y,overlay = self._generate_overlay(key, frame)
+            temp_overlays[key] = overlay
 
         sum_score = 0
-        offense_probs = self.overlays[self.target_player_id]
+        offense_probs = temp_overlays[self.target_player_id]
         defense_probs = [0] * len(offense_probs)
-        for key in self.overlays.keys():
+        for key in temp_overlays.keys():
             if key != self.target_player_id:
-                defense_probs += self.overlays[key]
+                defense_probs += temp_overlays[key]
+        differential = offense_probs - defense_probs
+        sum_score = sum(x for x in differential if x > 0)
+
+        input_len = self.get_input_seq_len()
+        if frame == input_len:
+            self.score = sum_score
         
-        for i in range(0, len(offense_probs)):
-            if offense_probs[i] > 0:
-                sum_score += offense_probs[i]
-                sum_score -= defense_probs[i]
-        
-        self.score = sum_score
+        return temp_overlays, coords_x, coords_y, sum_score
+
     
 
-    def _generate_overlay(self, key):
+    def _generate_overlay(self, key, frame):
         input_sequence = self.player_movement_input[key]
-        input_len = len(self.player_movement_input[key])
-        centerx = input_sequence[-1][0].item()
-        centery = input_sequence[-1][1].item()
+        input_sequence = input_sequence[:frame]
+        input_len = frame
+        centerx = input_sequence[frame-1][0].item()
+        centery = input_sequence[frame-1][1].item()
         time = self.target[0]
 
         targets = []
