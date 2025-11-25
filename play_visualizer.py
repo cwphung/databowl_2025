@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     # Prompt user to select a play
     while True:
-        upid = input("\nEnter unique_play_id (or 'q' to quit): ").strip()
+        upid = input("\nEnter unique_play_id: ").strip()
 
         # allow quick exit
         if upid.lower() in {"q", "quit", "exit"}:
@@ -136,8 +136,11 @@ if __name__ == "__main__":
 
         save_animation = input("Do you want to save the animation (Y): ")
         if save_animation == "Y":
-            animation.save(f"play_animation_{upid}.mp4", writer="ffmpeg", fps=10, dpi=150)
-            print(f"Saved play_animation_{upid}.mp4")
+            animations_dir = os.path.join(os.getcwd(), "animations")
+            os.makedirs(animations_dir, exist_ok=True)
+            save_path = os.path.join(animations_dir, f"play_animation_{upid}.mp4")
+            animation.save(save_path, writer="ffmpeg", fps=10, dpi=150)
+            print(f"Saved animation to {save_path}")
 
         # prompt to continue
         response = input("Press ENTER to display another play, or type anything to quit: ").strip()

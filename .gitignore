@@ -2,5 +2,3 @@ __pycache__
 .ipynb_checkpoints
 .DS_Store
 venv
-*.mp4
-combined_data.csv

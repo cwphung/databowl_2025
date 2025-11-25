@@ -38,6 +38,9 @@ class play():
         self.player_movement_output = dict()
         self.target = None
         self.score = None
+        self.overlays = {}
+        self.overlay_x = None
+        self.overlay_y = None
 
     def __str__(self):
         return (
@@ -51,7 +54,7 @@ class play():
             f"  defense_team={self.defense_team},\n"
             f"  player_movement_input_keys={list(self.player_movement_input.keys())},\n"
             f"  player_movement_output_keys={list(self.player_movement_output.keys())},\n"
-            f"  play output num frames={self.target[0]},\n"
+            f"  play output num frame_idxs={self.target[0]},\n"
             f"  play ball land location={self.target[1:]},\n"
             f"  play result={self.pass_result},\n"
             f"  play score={self.score}\n"
@@ -70,8 +73,10 @@ class play():
         coords_x = None
         coords_y = None
 
+        full_len = self.get_input_seq_len()
+
         for key in self.player_movement_output.keys():
-            cx, cy, overlay = self._generate_overlay(key)
+            cx, cy, overlay = self._generate_overlay(key, full_len)
             self.overlays[key] = np.array(overlay)
             if coords_x is None:
                 coords_x = np.array(cx)
@@ -100,12 +105,12 @@ class play():
         offense_area = offense_probs[off_mask].sum()
         self.score = float(offense_area - overlap_area)
 
-    def _generate_overlay(self, key):
+    def _generate_overlay(self, key, frame_idx):
         input_sequence = self.player_movement_input[key]
-        input_sequence = input_sequence[:frame]
-        input_len = frame
-        centerx = input_sequence[frame-1][0].item()
-        centery = input_sequence[frame-1][1].item()
+        input_sequence = input_sequence[:frame_idx]
+        input_len = frame_idx
+        centerx = input_sequence[frame_idx-1][0].item()
+        centery = input_sequence[frame_idx-1][1].item()
         time = self.target[0]
 
         targets = []

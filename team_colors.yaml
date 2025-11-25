@@ -66,6 +66,10 @@ LAC:
   primary: "#0080C6"
   secondary: "#FFC20E"
 
+LA:
+  primary: "#0080C6"
+  secondary: "#FFC20E"
+
 LAR:
   primary: "#003594"
   secondary: "#FFD100"
