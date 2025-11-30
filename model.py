@@ -48,3 +48,12 @@ class ReachabilityModel(nn.Module):
         reach_prob = self.fc_reach(z)
 
         return reach_prob
+    
+class catchProb(nn.Module):
+    def __init__(self, input_dim=2):
+        super().__init__()
+        # Single linear layer → sigmoid
+        self.linear = nn.Linear(input_dim, 1)
+
+    def forward(self, x):
+        return torch.sigmoid(self.linear(x))
