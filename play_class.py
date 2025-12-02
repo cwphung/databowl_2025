@@ -41,7 +41,6 @@ class play():
         self.target = None
         self.pass_score = None
         self.open_score = None
-        self.overlays = {}
         self.overlay_x = None
         self.overlay_y = None
 
@@ -74,16 +73,16 @@ class play():
         else:
             return 0
 
-    def generate_overlays_and_score(self):
-        self.overlays = {}
+    def generate_overlays_and_score(self, frame_idx):
+        overlays = {}
         coords_x = None
         coords_y = None
 
-        full_len = self.get_input_seq_len()
+        #full_len = self.get_input_seq_len()
 
         for key in self.player_movement_output.keys():
-            cx, cy, overlay = self._generate_overlay(key, full_len)
-            self.overlays[key] = np.array(overlay)
+            cx, cy, overlay = self._generate_overlay(key, frame_idx)
+            overlays[key] = np.array(overlay)
             if coords_x is None:
                 coords_x = np.array(cx)
                 coords_y = np.array(cy)
@@ -91,15 +90,11 @@ class play():
         self.overlay_x = coords_x
         self.overlay_y = coords_y
 
-        if self.target_player_id is None or self.target_player_id not in self.overlays:
-            self.score = None
-            return
-
-        offense_probs = self.overlays[self.target_player_id]
+        offense_probs = overlays[self.target_player_id]
         offense_probs = np.array(offense_probs, dtype=float)
         defense_sum = np.zeros_like(offense_probs)
 
-        for pid, probs in self.overlays.items():
+        for pid, probs in overlays.items():
             if pid != self.target_player_id:
                 defense_sum += np.array(probs, dtype=float)
 
@@ -109,7 +104,7 @@ class play():
         overlap_mask = off_mask & def_mask
         overlap_area = np.minimum(offense_probs, defense_sum)[overlap_mask].sum()
         offense_area = offense_probs[off_mask].sum()
-        self.open_score = float(offense_area - overlap_area)
+        open_score = float(offense_area - overlap_area)
 
         landx = int(self.target[1])
         landy = int(self.target[2])
@@ -117,11 +112,17 @@ class play():
         yrange = np.where(coords_y == landy)
         ind = np.intersect1d(xrange, yrange)
         pass_score = offense_probs[ind]-defense_sum[ind]
-        if len(pass_score) < 1:
-            # pass was out of bounds
-            self.pass_score = 0
-        else:
-            self.pass_score = pass_score[0]*100.0
+
+        full_len = self.get_input_seq_len()
+        if frame_idx == full_len:
+            self.open_score = open_score
+            if len(pass_score) < 1:
+                # pass was out of bounds
+                self.pass_score = 0
+            else:
+                self.pass_score = pass_score[0]*100.0
+
+        return overlays, coords_x, coords_y, open_score
 
 
     def _generate_overlay(self, key, frame_idx):
