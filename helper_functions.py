@@ -68,6 +68,11 @@ def generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_d
                             [row["num_frames_output"], row["ball_land_x"], row["ball_land_y"]]
                         )
 
+                # if is quarterback
+                if row['player_position'] == "QB":
+                    this_play.quarterback_id = player_id
+                    this_play.quarterback_name = row['player_name']
+
                 # add movement to player movement dict
                 data = np.array([row['x'], row['y'], row['o'], row['v_x'], row['v_y'], row['a_x'], row['a_y']])
                 if player_id not in this_play.player_movement_input:

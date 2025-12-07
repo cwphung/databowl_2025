@@ -394,14 +394,6 @@ def animate_play(
                 & (play_df["player_name"] == qb_name)
             ]
 
-        if qb_row.empty and "position" in play_df.columns:
-            cand = play_df[
-                (play_df["frame_id"] == last_input_frame)
-                & (play_df["position"].str.upper() == "QB")
-            ]
-            if not cand.empty:
-                qb_row = cand
-
         if not qb_row.empty:
             qb_x = qb_row["x"].iloc[0]
             qb_y = qb_row["y"].iloc[0]
@@ -791,32 +783,34 @@ def animate_play(
                 open_score_curr = per_step_open_scores[step_idx]
 
         # ---- Football in flight vs final marker ----
-        # default: hide both
+        # default: hide both every frame, then selectively show
         ball_marker.set_visible(False)
         if ball_patch is not None:
             ball_patch.set_visible(False)
 
-        if last_input_frame is not None and output_frames.size > 0:
+        if last_input_frame is not None and last_output_frame is not None:
             if f <= last_input_frame:
-                # input phase: no ball visible
                 pass
-            elif last_output_frame is not None and f < last_output_frame:
-                # ball in air: interpolate QB -> landing point
-                if ball_patch is not None and qb_x is not None:
-                    j = np.searchsorted(output_frames, f, side="left")
+
+            elif f < last_output_frame:
+                if ball_patch is not None and qb_x is not None and qb_y is not None:
+                    out_idx = np.searchsorted(output_frames, f, side="left")
                     n_out = len(output_frames)
-                    t = (j + 1) / n_out  # 0->1 across output frames
+                    if n_out > 0:
+                        t = (out_idx + 1) / n_out
+                    else:
+                        t = 1.0
 
                     x_curr = qb_x + (ball_x - qb_x) * t
                     y_curr = qb_y + (ball_y - qb_y) * t
 
                     ball_patch.center = (x_curr, y_curr)
                     ball_patch.set_visible(True)
+
             else:
-                # at/after last output frame: show final result marker
                 ball_marker.set_visible(True)
+
         else:
-            # no distinct output frames -> only show marker on final play frame
             if frame_idx == num_play_frames - 1:
                 ball_marker.set_visible(True)
 
@@ -974,6 +968,8 @@ def animate_play(
             artists.append(offense_img)
         if defense_img is not None:
             artists.append(defense_img)
+        if ball_patch is not None:
+            artists.append(ball_patch)
 
         return tuple(artists)
 
