@@ -156,7 +156,8 @@ def animate_play(
     play_df: pd.DataFrame,
     play_obj=None,
     label_col: str = "label",
-    heat_thresh: float = 0.01
+    heat_thresh: float = 0.01,
+    hold_extra_frames: int = 20
 ):
     """
     Animate a single play with per-frame model heatmaps.
@@ -167,7 +168,6 @@ def animate_play(
 
     # --- Total animation frames (hold final frame) ---
     num_play_frames   = len(frames)
-    hold_extra_frames = 20          # ~2s at interval=100 ms
     total_anim_frames = num_play_frames + hold_extra_frames
 
     # ----- Find input frames & last input frame -----
@@ -302,7 +302,7 @@ def animate_play(
 
     # LOS and 1st down
     los_line = ax.axvline(
-        los_x, color="cyan", linewidth=3, alpha=0.9, label="LOS"
+        los_x, color="#0077FF", linewidth=3, alpha=0.9, label="LOS"
     )
     if first_down_x is not None:
         first_down_line = ax.axvline(
@@ -982,7 +982,6 @@ def animate_play(
     )
 
     plt.tight_layout()
-    plt.show()
 
     return anim
 
@@ -1177,3 +1176,174 @@ def combine_tracking_data(input_dfs, output_dfs, supp_df):
             )
 
     return df_all
+
+
+def plot_open_score_vs_time(
+    play_df: pd.DataFrame,
+    play_obj,
+    label_col: str = "label",
+    tracking_fps: float = 10.0,
+    hold_extra_frames: int = 20
+):
+    """
+    Animate open score vs time (input phase + output phase + hold buffer).
+
+    Parameters
+    ----------
+    play_df : pandas.DataFrame
+        Single-play data (same as used for animate_play).
+    play_obj : play
+        Play object with generate_overlays_and_score(frame_idx) implemented.
+    label_col : str, default "label"
+        Column marking 'input' vs 'output' frames.
+    tracking_fps : float, default 10.0
+        Tracking sample rate (frames per second). NFL is typically 10 Hz.
+    hold_extra_frames : int, default 20
+        Extra frames to hold the final value at the end (for a pause).
+
+    Returns
+    -------
+    anim : matplotlib.animation.FuncAnimation or None
+    fig  : matplotlib.figure.Figure or None
+    """
+    # ---- Sanity checks ----
+    if play_obj is None or getattr(play_obj, "target_player_id", None) is None:
+        print("plot_open_score_vs_time: play_obj or target_player_id missing; nothing to plot.")
+        return None, None
+
+    if label_col in play_df.columns:
+        input_mask = play_df[label_col] == "input"
+        output_mask = play_df[label_col] == "output"
+    else:
+        input_mask = np.zeros(len(play_df), dtype=bool)
+        output_mask = np.zeros(len(play_df), dtype=bool)
+
+    if not input_mask.any():
+        print("plot_open_score_vs_time: no input frames found; nothing to plot.")
+        return None, None
+
+    frames_all       = np.sort(play_df["frame_id"].unique())
+    input_frame_ids  = np.sort(play_df.loc[input_mask, "frame_id"].unique())
+    output_frame_ids = np.sort(play_df.loc[output_mask, "frame_id"].unique())
+
+    last_input_frame = int(input_frame_ids[-1])
+    # any frames strictly after last input are considered "output phase"
+    if output_frame_ids.size == 0:
+        output_frame_ids = frames_all[frames_all > last_input_frame]
+
+    # ---- Map frames to sequence steps used by the model ----
+    num_input_steps = play_obj.get_input_seq_len()
+    max_steps = min(num_input_steps, len(input_frame_ids))
+
+    if max_steps <= 0:
+        print("plot_open_score_vs_time: max_steps <= 0; nothing to plot.")
+        return None, None
+
+    # per-step open score over INPUT sequence
+    per_step_open_scores = []
+    for step_idx in range(1, max_steps + 1):
+        _, _, _, open_score = play_obj.generate_overlays_and_score(step_idx)
+        per_step_open_scores.append(open_score)
+    per_step_open_scores = np.array(per_step_open_scores, dtype=float)
+
+    # ---- Time axis ----
+    dt = 1.0 / tracking_fps
+
+    rel_frames_input = input_frame_ids[:max_steps] - input_frame_ids[0]
+    t_input = rel_frames_input * dt
+    t_throw = t_input[-1]
+
+    n_out = len(output_frame_ids)
+    n_buf = int(hold_extra_frames)
+
+    t_output = t_throw + dt * np.arange(1, n_out + 1)
+    t_buffer = t_output[-1] + dt * np.arange(1, n_buf + 1) if n_buf > 0 else np.array([])
+
+    t_full = np.concatenate([t_input, t_output, t_buffer])
+
+    open_scores_full = np.concatenate([
+        per_step_open_scores,
+        np.full(n_out + n_buf, per_step_open_scores[-1])
+    ])
+
+    # --- Receiver name for title ---
+    receiver_name = getattr(play_obj, "target_player_name", None)
+
+    if receiver_name is None:
+        tid = play_obj.target_player_id
+        rec_rows = play_df.loc[play_df["nfl_id"] == tid, "player_name"]
+        if len(rec_rows) > 0:
+            receiver_name = rec_rows.iloc[0]
+        else:
+            receiver_name = "Receiver"
+
+    # ---- Figure ----
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Throw-time marker
+    ax.axvline(
+        t_throw,
+        color="gray",
+        linestyle="--",
+        linewidth=1.5,
+        label="Pass thrown",
+    )
+
+    # axis limits with padding
+    y_min = float(open_scores_full.min())
+    y_max = float(open_scores_full.max())
+    y_margin = 0.1 * (y_max - y_min) if y_max > y_min else 1.0
+
+    ax.set_xlim(float(t_full[0]), float(t_full[-1]))
+    ax.set_ylim(y_min - y_margin, y_max + y_margin)
+
+    ax.set_xlabel("Time (s)", fontsize=11)
+    ax.set_ylabel("Open Score", fontsize=11)
+    ax.set_title(f"{receiver_name} Open Score vs. Time", fontsize=13)
+
+    # line + moving marker
+    (line,) = ax.plot([], [], linewidth=2)
+    (marker,) = ax.plot([], [], "o", markersize=6)
+
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+    plt.tight_layout()
+
+    n_frames_anim = len(t_full)
+
+    # ---- Animation functions ----
+    def init():
+        line.set_data([], [])
+        marker.set_data([], [])
+        return line, marker
+
+    def update(frame_idx):
+        # safety clamp
+        if frame_idx < 0:
+            frame_idx = 0
+        if frame_idx >= n_frames_anim:
+            frame_idx = n_frames_anim - 1
+
+        x_data = t_full[: frame_idx + 1]
+        y_data = open_scores_full[: frame_idx + 1]
+
+        x_list = x_data.tolist()
+        y_list = y_data.tolist()
+
+        line.set_data(x_list, y_list)
+        marker.set_data([x_list[-1]], [y_list[-1]])
+
+        return line, marker
+
+    interval_ms = 1000.0 / tracking_fps
+
+    anim = FuncAnimation(
+        fig,
+        update,
+        frames=n_frames_anim,
+        init_func=init,
+        interval=interval_ms,
+        blit=True,
+    )
+
+    return anim, fig

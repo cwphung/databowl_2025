@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 
@@ -108,3 +109,58 @@ def generateFullDataDict(input_dfs, output_dfs, supp_df, player_dict, coverage_d
             this_play.pass_result = row['pass_result']
 
     return full_data
+
+def load_and_clean_data(datapath: str):
+    """
+    Load raw CSVs from `datapath`, route them into input/output/supp lists,
+    and apply the appropriate cleaning functions.
+
+    Parameters
+    ----------
+    datapath : str
+        Path to the folder containing input_*, output_*, and supplementary* CSV files.
+
+    Returns
+    -------
+    input_dfs : list[pd.DataFrame]
+        List of cleaned input tracking dataframes.
+    output_dfs : list[pd.DataFrame]
+        List of cleaned output tracking dataframes.
+    supp_df : list[pd.DataFrame]
+        List of cleaned supplementary play-level dataframes.
+    """
+    input_dfs = []
+    output_dfs = []
+    supp_df = None
+
+    for item in sorted(os.listdir(datapath)):
+        fullpath = os.path.join(datapath, item)
+        if not os.path.isfile(fullpath):
+            continue
+
+        print(f"Reading: {item}")
+        df = pd.read_csv(fullpath, low_memory=False)
+
+        numeric_cols = [
+            "game_id", "play_id", "frame_id",
+            "absolute_yardline_number", "x", "y",
+            "s", "a", "dir", "o",
+            "num_frames_output", "ball_land_x", "ball_land_y",
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        if item.startswith("input_"):
+            df_clean = cleanInputData(df)
+            input_dfs.append(df_clean)
+
+        elif item.startswith("output_"):
+            df_clean = cleanOutputData(df)
+            output_dfs.append(df_clean)
+
+        elif item.startswith("supplementary"):
+            df_clean = cleanSupplementaryData(df)
+            supp_df = df_clean
+
+    return input_dfs, output_dfs, supp_df
