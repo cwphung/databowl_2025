@@ -157,7 +157,7 @@ def animate_play(
     play_obj=None,
     label_col: str = "label",
     heat_thresh: float = 0.01,
-    hold_extra_frames: int = 20
+    hold_extra_frames: int = 40
 ):
     """
     Animate a single play with per-frame model heatmaps.
@@ -296,8 +296,10 @@ def animate_play(
     fig, ax = plt.subplots(figsize=(12, 6))
     draw_nfl_field(ax)
     play_description = play_df.get("play_description", pd.Series([None])).iloc[0]
-    if pd.isna(play_description):
-        play_description = "Selected play"
+    text = str(play_description).strip()
+    max_chars = 100
+    if len(text) >= max_chars:
+        play_description = text[: max_chars - 3].rstrip() + "..."
     ax.set_title(play_description, fontsize=12)
 
     # LOS and 1st down
@@ -1183,7 +1185,7 @@ def plot_open_score_vs_time(
     play_obj,
     label_col: str = "label",
     tracking_fps: float = 10.0,
-    hold_extra_frames: int = 20
+    hold_extra_frames: int = 40
 ):
     """
     Animate open score vs time (input phase + output phase + hold buffer).
