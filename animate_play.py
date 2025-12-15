@@ -1,73 +1,21 @@
 import os
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 
 from helper_functions import (
-    cleanInputData, cleanOutputData, cleanSupplementaryData, 
-    generatePlayerDict, generateCoverageDict, generateFullDataDict
+    load_and_clean_data, 
+    generatePlayerDict, 
+    generateCoverageDict, 
+    generateFullDataDict,
     )
-from visualization_functions import combine_tracking_data, animate_play
 
-
-def load_and_clean_data(datapath: str):
-    """
-    Load raw CSVs from `datapath`, route them into input/output/supp lists,
-    and apply the appropriate cleaning functions.
-
-    Parameters
-    ----------
-    datapath : str
-        Path to the folder containing input_*, output_*, and supplementary* CSV files.
-
-    Returns
-    -------
-    input_dfs : list[pd.DataFrame]
-        List of cleaned input tracking dataframes.
-    output_dfs : list[pd.DataFrame]
-        List of cleaned output tracking dataframes.
-    supp_df : list[pd.DataFrame]
-        List of cleaned supplementary play-level dataframes.
-    """
-    input_dfs = []
-    output_dfs = []
-    supp_df = None
-
-    for item in sorted(os.listdir(datapath)):
-        fullpath = os.path.join(datapath, item)
-        if not os.path.isfile(fullpath):
-            continue
-
-        print(f"Reading: {item}")
-        df = pd.read_csv(fullpath, low_memory=False)
-
-        numeric_cols = [
-            "game_id", "play_id", "frame_id",
-            "absolute_yardline_number", "x", "y",
-            "s", "a", "dir", "o",
-            "num_frames_output", "ball_land_x", "ball_land_y",
-        ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        if item.startswith("input_"):
-            df_clean = cleanInputData(df)
-            input_dfs.append(df_clean)
-
-        elif item.startswith("output_"):
-            df_clean = cleanOutputData(df)
-            output_dfs.append(df_clean)
-
-        elif item.startswith("supplementary"):
-            df_clean = cleanSupplementaryData(df)
-            supp_df = df_clean
-
-    return input_dfs, output_dfs, supp_df
-
+from visualization_functions import (
+    combine_tracking_data, 
+    animate_play
+)
 
 if __name__ == "__main__":
 
+    # Load datasets
     datapath = os.path.join(os.getcwd(), "data")
     input_dfs, output_dfs, supp_df = load_and_clean_data(datapath)
 
@@ -134,13 +82,29 @@ if __name__ == "__main__":
         print(f"Animating: {desc}")
         animation = animate_play(play_df, play_obj)
 
+        # Show animation
+        plt.show(block=True)
+
+        # Ask to save animation
         save_animation = input("Do you want to save the animation (Y): ")
         if save_animation == "Y":
             animations_dir = os.path.join(os.getcwd(), "animations")
             os.makedirs(animations_dir, exist_ok=True)
-            save_path = os.path.join(animations_dir, f"play_animation_{upid}.mp4")
-            animation.save(save_path, writer="ffmpeg", fps=10, dpi=150)
-            print(f"Saved animation to {save_path}")
+
+            off_abbrev = play_df["possession_team"].dropna().iloc[0]
+            def_abbrev = play_df["defensive_team"].dropna().iloc[0]
+
+            animation_file = f"{off_abbrev}_{def_abbrev}_animation_{upid}.mp4"
+            animation_path = os.path.join(animations_dir, animation_file)
+            
+            animation.save(animation_path, writer="ffmpeg", fps=10, dpi=150)
+            print(f"Saved animation to {animation_path}")
+        
+        # Close plot
+        try:
+            plt.close(animation._fig)
+        except Exception:
+            plt.close("all")
 
         # prompt to continue
         response = input("Press ENTER to display another play, or type anything to quit: ").strip()
