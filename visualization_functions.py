@@ -157,7 +157,7 @@ def animate_play(
     play_obj=None,
     label_col: str = "label",
     heat_thresh: float = 0.01,
-    hold_extra_frames: int = 40
+    hold_extra_frames: int = 50
 ):
     """
     Animate a single play with per-frame model heatmaps.
@@ -297,7 +297,7 @@ def animate_play(
     draw_nfl_field(ax)
     play_description = play_df.get("play_description", pd.Series([None])).iloc[0]
     text = str(play_description).strip()
-    max_chars = 100
+    max_chars = 112
     if len(text) >= max_chars:
         play_description = text[: max_chars - 3].rstrip() + "..."
     ax.set_title(play_description, fontsize=12)
@@ -1185,7 +1185,7 @@ def plot_open_score_vs_time(
     play_obj,
     label_col: str = "label",
     tracking_fps: float = 10.0,
-    hold_extra_frames: int = 40
+    hold_extra_frames: int = 50
 ):
     """
     Animate open score vs time (input phase + output phase + hold buffer).
